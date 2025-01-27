@@ -1,0 +1,271 @@
+#-------------------------------------------------------------------------------
+ E2 ether2-inet     : 192.168.122.2   ->  IP Modem1   : 192.168.122.1
+ E3 ether3-server   : 192.168.1.6/29  ->  IP Server   : 192.168.1.1/24
+ E4 ether4-pimpinan : 172.16.1.14/28  ->  IP Pimpinan : 172.16.1.1 - 172.16.1.13
+ E5 ether5-staf     : 10.1.1.254/24   ->  IP Staf     : 10.1.1.1   - 10.1.1.253
+#-------------------------------------------------------------------------------
+
+                  ------------------------
+                  [ mikrotik routerboard ]
+                  ------------------------
+                    E1 E2 E3 E4 E5
+                       |  |  |  |
+    192.168.122.1      |  |  |  |       10.1.1.x
+   --------------      |  |  |  |      ------------
+   [   Modem    ]------|  |  |  |------[   Staf   ]
+   --------------         |  |         ------------
+                          |  |
+   --------------         |  |         -------------
+   [ HUB/Switch ]---------|  |---------[  Pimpinan ]
+   --------------                      -------------
+         |                             172.16.1.x
+   --------------
+   [   Server   ]
+   --------------
+    192.168.1.1
+
+--------------------------------------------------------------------------------
+# Setting Interface
+--------------------------------------------------------------------------------
+    /interface ethernet
+    set [ find default-name=ether2 ] name=ether2-inet
+    set [ find default-name=ether3 ] name=ether3-server
+    set [ find default-name=ether4 ] name=ether4-pimpinan
+    set [ find default-name=ether5 ] name=ether5-staf
+    
+    /ip address
+    add interface=ether2-inet address=192.168.122.2/24
+    add interface=ether3-server address=192.168.1.6/29
+    add interface=ether4-pimpinan address=172.16.1.14/28
+    add interface=ether5-staf address=10.1.1.254/24
+    print
+
+--------------------------------------------------------------------------------
+# Setting Route & DHCP
+--------------------------------------------------------------------------------
+    /ip dns 
+    set servers=1.1.1.1,8.8.8.8 allow-remote-requests=yes
+    
+    /ip route add gateway=192.168.122.1
+    
+    /ip firewall nat 
+    add chain=srcnat src-address=192.168.1.0/29 out-interface=ether2-inet action=masquerade
+    add chain=srcnat src-address=172.16.1.0/28 out-interface=ether2-inet action=masquerade
+    add chain=srcnat src-address=10.1.1.0/24 out-interface=ether2-inet action=masquerade
+
+    /ip pool 
+    add name=pool_pimpinan ranges=172.16.1.8-172.16.1.13
+    add name=pool_staf ranges=10.1.1.128-10.1.1.253
+
+    /ip dhcp-server
+    add name=dhcp-pimpinan address-pool=pool_pimpinan disabled=no interface=ether4-pimpinan 
+    add name=dhcp-staf address-pool=pool_staf disabled=no interface=ether5-staf
+
+    /ip dhcp-server network
+    add address=172.16.1.0/28 dns-server=1.1.1.1,8.8.8.8 gateway=172.16.1.14
+    add address=10.1.1.0/24 dns-server=1.1.1.1,8.8.8.8 gateway=10.1.1.254
+
+--------------------------------------------------------------------------------
+# Setting Hotspot
+--------------------------------------------------------------------------------
+    /ip hotspot setup
+	    hotspot interface           : Hotspot
+	    local address of network    : 10.1.1.254/24
+	    masquerade network          : yes
+	    address pool of network     : 10.1.1.10-10.1.1.253
+	    select certificate          : none
+	    ip address of smtp server   : 119.235.250.172
+	    dns servers                 : 1.1.1.1,8.8.8.8
+	    dns name                    : hotspot.lab
+	    name of local hotspot       : admin
+	    password for the user       : adminpass
+
+    /ip hotspot user
+    profile add name="EDP" shared-users=2 rate-limit="96k/768k" address-pool=none session-timeout=0s idle-timeout=none keepalive-timeout=00:15:00 open-status-page=always transparent-proxy=yes advertise=no
+    profile add name="KDM" shared-users=2 rate-limit="64k/200k" address-pool=none session-timeout=0s idle-timeout=none keepalive-timeout=00:15:00 open-status-page=always transparent-proxy=yes advertise=no
+
+--------------------------------------------------------------------------------
+# Setting Sistem & Security
+--------------------------------------------------------------------------------
+    # /system ntp client set primary-ntp=id.pool.ntp.org secondary-ntp=ntp.nasa.gov enabled=yes mode=unicast
+    /system ntp client set primary-ntp=116.12.47.30 secondary-ntp=103.177.8.230 enabled=yes
+    /system clock set time-zone-name=Asia/Jakarta
+
+    /ip service set www port=9090
+    /ip firewall filter
+    add chain=input protocol=tcp psd=21,3s,3,1 action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="Port scanners to list " disabled=no
+    add chain=input protocol=tcp tcp-flags=fin,!syn,!rst,!psh,!ack,!urg action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="NMAP FIN Stealth scan"
+    add chain=input protocol=tcp tcp-flags=fin,syn action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="SYN/FIN scan"
+    add chain=input protocol=tcp tcp-flags=syn,rst action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="SYN/RST scan"
+    add chain=input protocol=tcp tcp-flags=fin,psh,urg,!syn,!rst,!ack action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="FIN/PSH/URG scan"
+    add chain=input protocol=tcp tcp-flags=fin,syn,rst,psh,ack,urg action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="ALL/ALL scan"
+    add chain=input protocol=tcp tcp-flags=!fin,!syn,!rst,!psh,!ack,!urg action=add-src-to-address-list address-list="port scanners" address-list-timeout=2w comment="NMAP NULL scan"
+    add chain=input src-address-list="port scanners" action=drop comment="dropping port scanners" disabled=no
+
+--------------------------------------------------------------------------------
+# Setting Transparent Proxy
+--------------------------------------------------------------------------------
+    /ip proxy
+    set enabled=yes
+    set src-address=0.0.0.0
+    set port=8080
+    set parent-proxy=0.0.0.0
+    set parent-proxy-port=0
+    set cache-administrator="webmaster@freebsd.org"
+    set max-cache-size=unlimited
+    set cache-on-disk=yes
+    set max-client-connections=600
+    set max-server-connections=600
+    set max-fresh-time=3d
+    set serialize-connections=no
+    set always-from-cache=no
+    set cache-hit-dscp=4
+
+    /ip firewall nat
+    add chain=dstnat protocol=tcp dst-port=80 action=redirect to-ports=8080
+    add chain=dstnat protocol=tcp dst-port=3128 action=redirect to-ports=8080
+    add chain=dstnat protocol=tcp dst-port=8080 action=redirect to-ports=8080
+
+--------------------------------------------------------------------------------
+# Blok Akses Tertentu
+--------------------------------------------------------------------------------
+    /ip proxy access
+
+    #------[Blok Situs]------------------------
+    add dst-host="*porn*.com" action=deny
+    add dst-host="*sex*.com" action=deny
+    add dst-host=twitter.com action=deny
+    add dst-host=facebook.com action=deny
+
+    #------[Blok File]------------------------
+    add path=*.rar action=deny
+    add path=*.zip action=deny
+    add path=*.mov action=deny
+    add path=*.exe action=deny
+    add path=*.msi action=deny
+    add path=*.dat action=deny
+    add path=*.mkv action=deny
+    add path=*.mp4 action=deny
+    add path=*.3gp action=deny
+    add path=*.avi action=deny
+    add path=*.mp3 action=deny
+
+    #------[Blok Keyword]--------------------
+    add dst-host=:sex action=deny
+    add dst-host=:nude action=deny
+    add dst-host=:porn action=deny
+    add dst-host=:adult action=deny
+
+--------------------------------------------------------------------------------
+# Batasi Speed Download
+--------------------------------------------------------------------------------
+    /ip firewall filter 
+    add chain=forward address-list-timeout=00:05:00 content=.mp3 src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.mp4 src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.3gp src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.avi src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.mkv src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.mov src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.exe src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.msi src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.iso src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.zip src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+    add chain=forward address-list-timeout=00:05:00 content=.rar src-address=0.0.0.0/0 protocol=tcp action=add-dst-to-address-list address-list=downloads
+
+    /ip firewall mangle add chain=forward protocol=tcp src-address-list=downloads action=mark-packet new-packet-mark=downloads-paket
+
+    /queue simple add max-limit=128k/128k name=downloads-files packet-marks=downloads-paket target=ether4-pimpinan,ether5-staf
+
+--------------------------------------------------------------------------------
+# Setting Simple Queue
+--------------------------------------------------------------------------------
+    /queue simple
+    add name=eksekutif target=ether4-pimpinan max-limit=64k/128k
+
+--------------------------------------------------------------------------------
+# Instalasi & Setting Proxy
+--------------------------------------------------------------------------------
+    # Partisi
+      /         ext4        40GB    primary
+      /boot     ext4        100mb
+      /cache    reiserfs    20GB
+      swap      ----        2GB
+      /home     ext4        ~~~~
+    
+    # Catatan
+      btrFs     : untuk OS 64bit
+      reiserFs  : untuk OS 32bit
+    
+    # Ganti Repo & Install paket dasar
+      mv /etc/apt/sources.list /etc/apt/sources.list.asli
+      cat > /etc/apt/sources.list <<EOF
+      deb http://debian.indika.net.id/debian squeeze main non-free contrib
+      deb http://debian.indika.net.id/debian-security squeeze/updates main non-free contrib
+      EOF
+      apt-get update
+      apt-get install gcc build-essential sharutils libzip-dev automake
+      
+    # Download paket yang diperlukan
+      cd /tmp
+      wget http://lusca-cache.googlecode.com/files/LUSCA_HEAD-r14809.tar.gz
+      wget http://faisal-sani-project.googlecode.com/files/patch.tar.gz
+      wget http://faisal-sani-project.googlecode.com/files/storeurl.pl
+      wget http://xenstack.googlecode.com/files/konfig_squid_lusca.tar.gz
+      tar xzvf LUSCA_HEAD-r14809.tar.gz
+      tar xzvf patch.tar.gz
+      
+    # Copy patch & install patch
+      cp -r /tmp/patch/* /tmp/LUSCA*/
+      cd LUSCA*
+      patch -p0 < luscaVaryrR14697.diff
+      patch -p0 < 3xx\ loop.diff
+      patch -p0 < ignore-must-revalidate.diff
+      patch -p2 < keblux-lusca-gzip.patch
+    chmod bootstrap.sh
+    ./bootstrap.sh
+    
+    # Configure & build
+      ./configure --prefix=/usr --exec_prefix=/usr --bindir=/usr/sbin --sbindir=/usr/sbin --libexecdir=/usr/lib/squid --sysconfdir=/etc/squid \
+      --localstatedir=/var/spool/squid --datadir=/usr/share/squid --enable-http-gzip --enable-async-io=24 --with-aufs-threads=24 --with-pthreads \
+      --enable-storeio=aufs --enable-linux-netfilter --enable-arp-acl --enable-epoll --enable-removal-policies=heap --with-aio --with-dl --enable-snmp \
+      --enable-delay-pools --enable-htcp --enable-cache-digests --disable-unlinkd --enable-large-cache-files --with-large-files \
+      --enable-err-languages=English --enable-default-err-language=English --with-maxfd=65536
+      make && make install
+      
+    # Setting Squid
+      mv /etc/squid/squid.conf.asli
+      mv /tmp/storeurl.pl /etc/squid/
+      mv /tmp/konfig_squid_lusca/squid.conf /etc/squid/
+      mv /tmp/konfig_squid_lusca/squid.conf.pl /etc/squid/
+      
+    # Buat cache & jalankan squid
+      squid -f /etc/squid/squid.conf -z
+      squid -N -d 1 -D
+    
+    # --------------------------------------------------------------------------  
+    # Konfigurasi Firewall di Mikrotik
+    # --------------------------------------------------------------------------
+    
+      /ip firewall mangle      
+      add disabled=no chain=prerouting action=mark-packet dscp=12 new-packet-mark=proxy-hit passthrough=no
+      add disabled=no chain=prerouting action=mark-connection dst-port=80 new-connection-mark=http-conn passthrough=no protocol=tcp
+      add disabled=no chain=prerouting action=mark-packet connection-mark=http-conn new-packet-mark=http passthrough=yes
+      add disabled=no chain=prerouting action=mark-connection connection-state=new dst-port=443 new-connection-mark=https-conn passthrough=yes protocol=tcp
+      add disabled=no chain=prerouting action=mark-routing connection-mark=https-conn new-routing-mark=https passthrough=no
+      add disabled=no chain=prerouting action=mark-connection dst-port=53 new-connection-mark=DNS passthrough=yes protocol=tcp
+      add disabled=no chain=prerouting action=mark-connection dst-port=53 new-connection-mark=DNS passthrough=yes protocol=udp
+      add disabled=no chain=prerouting action=change-dscp connection-mark=DNS new-dscp=12
+      add disabled=no chain=prerouting action=mark-packet connection-mark=DNS new-packet-mark=DNS_PACKET passthrough=no
+      add disabled=no chain=prerouting action=mark-packet new-packet-mark=DNS_PACKET passthrough=yes
+      
+      add disabled=no chain=forward action=mark-connection dst-port=5050,5100,5051 new-connection-mark=YM passthrough=no protocol=tcp
+      add disabled=no chain=forward action=mark-connection connection-mark=YM disabled=no new-connection-mark=YM passthrough=yes
+      add disabled=no chain=forward action=mark-connection dst-port=843,9339,39100,39110,39220,39190,49100,19101,19000,4300 new-connection-mark=POKER passthrough=no protocol=tcp
+      add disabled=no chain=forward action=mark-connection connection-mark=POKER new-connection-mark=POKER passthrough=yes
+      add disabled=no chain=forward action=change-mss comment=”CHANGE MMS” disabled=no in-interface=ether1 new-mss=1440 protocol=tcp tcp-flags=syn tcp-mss=1441-65535
+      add disabled=no chain=forward action=change-mss new-mss=1440 out-interface=ether1 protocol=tcp tcp-flags=syn tcp-mss=1441-65535
+      add disabled=no chain=forward action=accept comment=”Total Pemakaian” in-interface=ether1
+      add disabled=no chain=input   action=mark-connection comment=Winbox dst-port=8291 new-connection-mark=winbox passthrough=no protocol=tcp
+    
+    # Cek log squid
+      tail –f /var/log/squid/access.log |grep HIT
